@@ -2,13 +2,15 @@ import torch
 import numpy as np
 
 from models.YoloV5Face.model import Yolov5FaceModel, convert_tlbr_to_tlwh
-from models.deepsort.detection import Detection
-
-device = torch.device('cuda')
+from models.deepsort_torch.deep.feature_extractor import Extractor
+from general import device
 
 class DTCTracker:
     def __init__(self):
         self.faceDetection = Yolov5FaceModel()
+
+        deepsort_path = './models/deepsort_torch/deep/checkpoint/original_ckpt.t7'
+        self.extractor = Extractor(self.deepsort_path)
 
         self.init()
     def init(self):
@@ -18,7 +20,8 @@ class DTCTracker:
         '''Frame is raw numpy frame'''
         if BGR:
             frame = frame[:, :, ::-1] #TO RGB
-        self.image_tensor = torch.from_numpy(frame).to(device)
+        self.image_tensor = torch.from_numpy(frame.copy()).to(device) #must copy() frame otherwise weird errors
+        detections = self.get_detections(self.image_tensor)
     
     def get_detections(self, frame):
         '''Yolov5face'''
@@ -31,8 +34,8 @@ class DTCTracker:
         
         return scaled_preds
 
-    def toDetectionObjs(self, preds):
-        '''Convert predictions from Tensor, to list[Detection objects]''' 
+    def get_features(self, detections: torch.Tensor, frame: torch.Tensor):
+        '''Using Deepsort to get features''' 
 
         boxes = [ detection[:4] for detection in detections]
         confidences = [ detection[4] for detection in detections]
