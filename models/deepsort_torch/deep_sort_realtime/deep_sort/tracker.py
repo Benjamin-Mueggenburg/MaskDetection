@@ -5,6 +5,7 @@ from . import kalman_filter
 from . import linear_assignment
 from . import iou_matching
 from .track import Track
+import torch
 
 
 class Tracker:
@@ -37,8 +38,7 @@ class Tracker:
 
     """
 
-    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, override_track_class=None, clock=None, logger=None):
-        self.logger = logger
+    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, clock=None, adc_threshold=0.5):
         # assert clock is not None
         self.clock = clock
         if self.clock:
@@ -47,15 +47,13 @@ class Tracker:
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
         self.n_init = n_init
+        self.adc_threshold = adc_threshold
 
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
-        self.del_tracks_ids = []
         self._next_id = 1
-        if override_track_class:
-            self.track_class = override_track_class
-        else:
-            self.track_class = Track
+
+        self.track_boxes = torch.Tensor()
         
 
     def predict(self):
@@ -93,14 +91,7 @@ class Tracker:
             self.tracks[track_idx].mark_missed()
         for detection_idx in unmatched_detections:
             self._initiate_track(detections[detection_idx])
-        new_tracks = []
-        self.del_tracks_ids = []
-        for t in self.tracks:
-            if not t.is_deleted():
-                new_tracks.append(t)
-            else:
-                self.del_tracks_ids.append(t.track_id)
-        self.tracks = new_tracks
+        self.tracks = [t for t in self.tracks if not t.is_deleted()]
         # self.tracks = [t for t in self.tracks if not t.is_deleted()]
 
         # Update distance metric.
@@ -111,7 +102,8 @@ class Tracker:
                 continue
             features += track.features
             targets += [track.track_id for _ in track.features]
-            track.features = [track.features[-1]]
+            #track.features = [track.features[-1]] #What they had implemented in the pytorch one
+            track.features = [] #What I had implemented TODO in original mask detection
         self.metric.partial_fit(
             np.asarray(features), np.asarray(targets), active_targets)
 
@@ -162,8 +154,6 @@ class Tracker:
             track_id = '{}_{}'.format(self.clock.get_now_SGT_date_str(), self._next_id)
         else:
             track_id = '{}'.format(self._next_id)    
-        self.tracks.append(self.track_class(
-            mean, covariance, track_id, self.n_init, self.max_age,
-            # mean, covariance, self._next_id, self.n_init, self.max_age,
-            feature=detection.feature, det_class=detection.class_name, det_conf=detection.confidence, logger=self.logger))
+        self.tracks.append(Track(
+            mean, covariance, track_id, self.n_init, self.max_age, detection.cls, self.adc_threshold, detection.confidence, detection.feature))
         self._next_id += 1

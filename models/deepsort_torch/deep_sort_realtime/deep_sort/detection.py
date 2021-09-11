@@ -30,22 +30,23 @@ class Detection(object):
 
     """
 
-    def __init__(self, ltwh, confidence, feature, class_name=None, others=None):
+    def __init__(self, bbox, cls, feature):
+        '''
+        @param bbox - torch.Tensor [x, y, w, h, confidence]
+        '''
     # def __init__(self, ltwh, feature):
-        self.ltwh = np.asarray(ltwh, dtype=np.float)
-        self.confidence = float(confidence)
-        self.feature = np.asarray(feature, dtype=np.float32)
-        self.class_name = class_name
-        self.others = others
+        self.bbox = bbox
+        self.tlwh = np.asarray(bbox[:4].cpu().numpy(), dtype=np.float)
+        self.confidence = bbox[4]
+        self.cls = cls
+        self.feature = feature
 
-    def get_ltwh(self):
-        return self.ltwh.copy()
 
     def to_tlbr(self):
         """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
         `(top left, bottom right)`.
         """
-        ret = self.ltwh.copy()
+        ret = self.tlwh.copy()
         ret[2:] += ret[:2]
         return ret
 
@@ -53,7 +54,7 @@ class Detection(object):
         """Convert bounding box to format `(center x, center y, aspect ratio,
         height)`, where the aspect ratio is `width / height`.
         """
-        ret = self.ltwh.copy()
+        ret = self.tlwh.copy()
         ret[:2] += ret[2:] / 2
         ret[2] /= ret[3]
         return ret

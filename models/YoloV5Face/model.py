@@ -15,12 +15,32 @@ def convert_tlbr_to_tlwh(boxes):
     '''
     if isinstance(boxes, torch.Tensor):
         #Torch implementation
-        boxes[:, 2] = boxes[:, 2] - boxes[:, 0]  # width
-        boxes[:, 3] = boxes[:, 3] - boxes[:, 1]  # height
-        return boxes
+        if boxes.dim() == 1:
+            #Single box rather than multiple
+            boxes[2] = boxes[2] - boxes[0]  # width
+            boxes[3] = boxes[3] - boxes[1] #height
+            return boxes
+        else:
+            #Assuming two dimensions means mulitiple boxes
+            boxes[:, 2] = boxes[:, 2] - boxes[:, 0]  # width
+            boxes[:, 3] = boxes[:, 3] - boxes[:, 1]  # height
+            return boxes
     else:
         #Numpy
         return [ [box[0], box[1], box[2] - box[0], box[3] - box[1], box[4]] for box in boxes ]
+
+def convert_tlwh_to_tlbr(boxes: torch.Tensor):
+    '''
+    Convert bboxs in format of x1, y1, w, h to x1, y1, x2, y2
+    '''
+    if isinstance(boxes, torch.Tensor):
+        if boxes.dim() == 1:
+            boxes[2:4] += boxes[:2]
+            return boxes
+        else:
+            #Assuming 2 dimensions
+            boxes[:, 2:4] += boxes[:, :2]
+            return boxes 
 
 class Yolov5FaceModel(module):
     '''This model takes image -> {img: <originalInputImage>, dets: <scaled_detections>}
@@ -56,8 +76,8 @@ class Yolov5FaceModel(module):
 
     def preprocess(self, img):
         '''Given a (image tensor) preprocess for inference'''
-
-        h0, w0 = img.shape[:2]
+        _img = img.detach().clone()
+        h0, w0 = _img.shape[:2]
     
         r = self.img_size / max(h0, w0)
         if r != 1:
@@ -66,20 +86,19 @@ class Yolov5FaceModel(module):
             #img0 = cv2.resize(img0, (int(w0 * r), int(h0 * r)), interpolation=interp)
             #Torch
             interp = "area" if r < 1 else "linear"
-            img = rescale_img(img, (int(w0 * r), int(h0 * r)), mode=interp)
+            _img = rescale_img(_img, (int(w0 * r), int(h0 * r)), mode=interp)
         imgsz = check_img_size(self.img_size, s=self.max_stride)  # check img_size
-        img = letterbox_torch(img0, new_shape=imgsz, auto=False)[0]
-        print("1 " + img.device)        
+        _img = letterbox_torch(_img, new_shape=imgsz, auto=False)[0]      
         # Convert
-        img = img.permuate(2, 0, 1)  # BGR to RGB, to 3x416x416
-        img = img.float()  # uint8 to fp16/32
+        _img = _img.permute(2, 0, 1)  # BGR to RGB, to 3x416x416
+        _img = _img.float()  # uint8 to fp16/32
 
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        _img /= 255.0  # 0 - 255 to 0.0 - 1.0
         
-        if img.ndimension() == 3:
-            img = img.unsqueeze(0)
+        if _img.ndimension() == 3:
+            _img = _img.unsqueeze(0)
 
-        return img
+        return _img
 
     def inference(self, img):
         preds = self.model.run(None, {self.model.get_inputs()[0].name: img.cpu().numpy()})  
