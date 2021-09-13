@@ -119,7 +119,7 @@ class DTCTracker:
         
         #Could really just use the get_image_patch code below but who care
         rois = [ ImageTensor.channels_last[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])] for bbox in bboxs]
-        return self.maskNet.classify_mask_batch(rois)
+        return self.maskClassifier.classify_mask_batch(rois)
 
         
 

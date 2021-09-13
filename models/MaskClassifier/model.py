@@ -1,4 +1,6 @@
 import module
+from general import rescale_img
+from torchvision.transforms import transforms
 
 import onnxruntime
 import torch
@@ -23,8 +25,8 @@ class EfficientNetModel(module):
         return onnxruntime.InferenceSession(self.weights_path, providers=providers)
 
     def preprocess(self, img_tensor):
-        return 
+        #convert to numpy
 
-    def inference(self, img_tensor):
+    def batch_classify(self, img_tensor):
         return
 
