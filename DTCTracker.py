@@ -13,9 +13,10 @@ from models.deepsort_torch.deep_sort_realtime.utils.nms import non_max_suppressi
 
 from general import device
 
+
 class DeepsortCfg:
     #Embedder cfg
-    deepsort_path = './models/deepsort_torch/deep/checkpoint/original_ckpt.t7'
+    deepsort_path = './models/deepsort_torch/deep_sort_realtime/embedder/weights/mobilenetv2_bottleneck_wts.pt'
     half = True
     max_batch_size = 16
     bgr = False
@@ -35,11 +36,11 @@ class ImageTensor:
     @property
     def channels_last(self):
         ''' Default - Image tensor shape [Width, Height, Channels]'''
-        return self.image_tensor
+        return self.image_tensor.clone()
     @property
     def channels_first(self):
         '''Image tensor shape [Channels, Width, Height]'''
-        return self.image_tensor_cwh
+        return self.image_tensor_cwh.clone()
 
 
 class DTCTracker:
@@ -47,7 +48,6 @@ class DTCTracker:
         self.faceDetection = Yolov5FaceModel()
         self.maskClassifier = EfficientNetModel()
         self.embeder = Embedder(model_wts_path=DeepsortCfg.deepsort_path, half=DeepsortCfg.half, max_batch_size=DeepsortCfg.max_batch_size, bgr=False)
-
         metric = nn_matching.NearestNeighborDistanceMetric("cosine", DeepsortCfg.max_cosine_distance, DeepsortCfg.nn_budget)
         self.tracker = Tracker(metric)
 
@@ -56,6 +56,7 @@ class DTCTracker:
         self.init()
     def init(self):
         self.faceDetection.init()
+        self.maskClassifier.init()
 
     #Public functions to call
     def update(self, frame, BGR=True):
@@ -84,12 +85,16 @@ class DTCTracker:
     def get_yolo_detections(self, frame):
         '''Yolov5face - frame is channels_last'''
         preproc_frame = self.faceDetection.preprocess(frame)
+
         preds = self.faceDetection.inference(preproc_frame)
         preds = self.faceDetection.nms(preds)
-
-        scaled_preds = self.faceDetection.postprocess_scale(preds, frame.shape[:2]) # dets are torch.Tensor with shape of [num_det, 5]. bbox in top left, bottom right format (tlbr)
+        #preds is always a list with one Tensor regardless if it detects anything
+        if preds[0].shape[0] == 0:
+            #No faces detected
+            return []
+        scaled_preds = self.faceDetection.postprocess_scale(preds, preproc_frame.shape[-2:], frame.shape[:2]) # dets are torch.Tensor with shape of [num_det, 5]. bbox in top left, bottom right format (tlbr)
         scaled_preds = convert_tlbr_to_tlwh(scaled_preds) #convert bboxs from top-left-bottom-right to top-left-width-height
-        
+
         return scaled_preds
     ######
     #Mask Detection classify
@@ -112,14 +117,15 @@ class DTCTracker:
             current_tracks[idx].classification = pred
             current_tracks[idx].time_since_classification = 0
 
-    def batch_classify(self, frame: ImageTensor, bboxs: list[np.array]):
+    def batch_classify(self, frame: ImageTensor, bboxs):
         #If possilbe implement batch sizes here, rather than processing all rois at once. Dunno if Ill need to cause how many faces are there in a picture?
+        #bboxs list of numpy array
         if len(bboxs) == 0:
             return []
         
-        #Could really just use the get_image_patch code below but who care
+        #Could really just use the get_image_patch code below but who cares
         rois = [ ImageTensor.channels_last[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])] for bbox in bboxs]
-        return self.maskClassifier.classify_mask_batch(rois)
+        return self.maskClassifier.batch_classify(rois)
 
         
 
@@ -134,7 +140,7 @@ class DTCTracker:
             return max(track.classification[0], track.classification[1]) < 0.8
     ######
     #Deepsort model
-    def get_image_patch(bbox, frame: ImageTensor):
+    def get_image_patch(self, bbox, frame: ImageTensor):
         '''Crop frame to bbox TLWH'''
         tlbr = convert_tlwh_to_tlbr(bbox).cpu().int().tolist()
         xmin, ymin, xmax, ymax = tlbr
@@ -143,8 +149,8 @@ class DTCTracker:
     def get_features(self, bboxs: torch.Tensor, frame: ImageTensor):
         '''Given bboxs and frame, use deepsort to get features, returns List[np.array with shape 1280]''' 
 
-        #bboxs have shape of (<num of bboxs>, 4) where it's format is top left width height (tlwh)
-        image_patches = [get_image_patch(box, frame) for box in bboxs]
+        #bboxs have shape of (<num of bboxs>, 4) where it's format is top left width height (tlwh), image patchs do have 
+        image_patches = [self.get_image_patch(box, frame) for box in bboxs]
         return self.embeder.predict(image_patches)
 
     def is_valid_track(self, track):
@@ -157,6 +163,10 @@ class DTCTracker:
         # if detections is NUMPY
         # boxes = [ detection[:4] for detection in detections]
         # confidences = [ detection[4] for detection in detections]
+        if detections == []:
+            #No detections just update tracker
+            self.tracker.predict()
+            return
 
         #detections are torch
 
@@ -177,4 +187,4 @@ class DTCTracker:
             detectionObjs = [detectionObjs[i] for i in indices]
             
         self.tracker.predict()
-        self.tracker.update(detections)
+        self.tracker.update(detectionObjs)

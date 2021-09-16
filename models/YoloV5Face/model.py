@@ -1,11 +1,12 @@
-import module
+from module import Module
 import onnxruntime
 import torch
 import cv2
+import numpy as np
 
 from general import rescale_img, device
 
-from models.YoloV5Face.utils.datasets import letterbox_torch
+from models.YoloV5Face.utils.datasets import letterbox_torch, letterbox
 from models.YoloV5Face.utils.general import check_img_size, non_max_suppression_face, apply_classifier, scale_coords, xyxy2xywh, \
     strip_optimizer, set_logging, increment_path
 
@@ -42,11 +43,11 @@ def convert_tlwh_to_tlbr(boxes: torch.Tensor):
             boxes[:, 2:4] += boxes[:, :2]
             return boxes 
 
-class Yolov5FaceModel(module):
+class Yolov5FaceModel(Module):
     '''This model takes image -> {img: <originalInputImage>, dets: <scaled_detections>}
         dets are in form of xywh'''
     def __init__(self):
-        super(__class__, self)
+        super(__class__, self).__init__()
 
         #Constants
         self.weight_path = "./weights/ONNX/yolov5n-0.5_5-09-2021.onnx"
@@ -78,19 +79,25 @@ class Yolov5FaceModel(module):
         '''Given a (image tensor) preprocess for inference'''
         _img = img.detach().clone()
         h0, w0 = _img.shape[:2]
-    
+        _img = _img.permute(2, 0, 1)  # BGR to RGB, to 3x416x416
         r = self.img_size / max(h0, w0)
         if r != 1:
             #CV2
-            #interp = cv2.INTER_AREA if r < 1  else cv2.INTER_LINEAR
-            #img0 = cv2.resize(img0, (int(w0 * r), int(h0 * r)), interpolation=interp)
+            # interp = cv2.INTER_AREA if r < 1  else cv2.INTER_LINEAR
+            # _img = _img.permute(0, 1, 2).cpu().numpy().astype(np.uint8)
+            # _img = np.dstack([*_img])
+            # _img = cv2.resize(_img, (int(w0 * r), int(h0 * r)), interpolation=interp)
+            # print(img0.shape)
             #Torch
             interp = "area" if r < 1 else "linear"
-            _img = rescale_img(_img, (int(w0 * r), int(h0 * r)), mode=interp)
+            _img = rescale_img(_img, (int(h0 * r), int(w0 * r)), mode=interp)
+
         imgsz = check_img_size(self.img_size, s=self.max_stride)  # check img_size
-        _img = letterbox_torch(_img, new_shape=imgsz, auto=False)[0]      
+        # _img = letterbox(_img, new_shape=imgsz, auto=False)[0]
+       
+        _img = letterbox_torch(_img, new_shape=imgsz, auto=False)[0]    
         # Convert
-        _img = _img.permute(2, 0, 1)  # BGR to RGB, to 3x416x416
+
         _img = _img.float()  # uint8 to fp16/32
 
         _img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -114,7 +121,7 @@ class Yolov5FaceModel(module):
         '''Non max supression'''
         return non_max_suppression_face(preds, self.conf_thres, self.iou_thres)
 
-    def postprocess_scale(self, pred, orgimg_shape):
+    def postprocess_scale(self, pred, preproc_shape, orgimg_shape):
         '''Returns preds scaled to original image shape'''
         dets = torch.Tensor().to(device) #TORCH (bbox shape is 4, confidence shape is 1 = 5) empty tensor with no shape
         #dets = [] #NUMPY
@@ -123,17 +130,17 @@ class Yolov5FaceModel(module):
             gn_lks = torch.tensor(orgimg_shape)[[1, 0, 1, 0, 1, 0, 1, 0, 1, 0]].to(device)  # normalization gain landmarks
             if len(det):
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], orgimg_shape).round()
+                det[:, :4] = scale_coords(preproc_shape, det[:, :4], orgimg_shape).round()
 
                 #WE DO NOT USE LANDMARKS SO SKIP
                 #   det[:, 5:15] = self.scale_coords_landmarks(img.shape[2:], det[:, 5:15], orgimg_shape).round()
 
                 for j in range(det.size()[0]):
                     #TORCH 
-                    bbox = det[j, :4].view(-1)
+                    xywh = (convert_tlbr_to_tlwh(det[j, :4].view(1, 4)) / gn).view(-1)
                     conf = det[j, 4]
-                    dets = torch.cat((dets, torch.cat(bbox, conf).unsqueeze(0))) #Assume torch.cat(bbox, conf) has a shape of [5] not [1,5]
-                    
+                    dets = torch.cat( (dets, torch.cat((xywh, conf.unsqueeze(0))).unsqueeze(0)) ) #Assume torch.cat(bbox, conf) has a shape of [5] not [1,5]
+                        
                     #NUMPY
                     # bbox = det[j, :4].view(-1).tolist()
                     # conf = det[j, 4].cpu().numpy()

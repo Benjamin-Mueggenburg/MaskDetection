@@ -1,10 +1,11 @@
+from general import device
 '''Filter base class. In a pipeline and filter architecture each filter will be a model/module '''
 class Module():
     def __init__(self):
         self.model = None
         self.keep_output_in_memory = False
 
-    def init(self, device):
+    def init(self, device=device):
         self.device = device
         
         if self.model == None:
