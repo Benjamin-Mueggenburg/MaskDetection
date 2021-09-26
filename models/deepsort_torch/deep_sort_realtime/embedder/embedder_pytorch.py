@@ -38,7 +38,7 @@ class MobileNetv2_Embedder(object):
     - bgr (optional, Bool) : boolean flag indicating if input frames are bgr or not, defaults to True
 
     '''
-    def __init__(self, model_wts_path = None, half=True, max_batch_size = 16, bgr=True, numpy=False):
+    def __init__(self, model_wts_path = None, half=True, max_batch_size = 16, bgr=False):
         if model_wts_path is None:
             model_wts_path = MOBILENETV2_BOTTLENECK_WTS
         assert os.path.exists(model_wts_path),f'Mobilenetv2 model path {model_wts_path} does not exists!'
@@ -53,20 +53,12 @@ class MobileNetv2_Embedder(object):
         self.half = half
         if self.half:
             self.model.half()
-        logger.info('MobileNetV2 Embedder for Deep Sort initialised')
-        logger.info(f'- half precision: {self.half}')
-        logger.info(f'- max batch size: {self.max_batch_size}')
-        logger.info(f'- expects BGR: {self.bgr}')
 
-        self.numpy = numpy
-        if self.numpy:
-            zeros = np.zeros((100, 100, 3), dtype=np.uint8) 
-        else:
-            zeros = torch.zeros((100, 100, 3)).float()
+
+        zeros = torch.zeros((3, 100, 100)).float()
         self.predict([zeros]) #warmup
-        print("Done")
 
-    def preprocess(self, torch_image):
+    def preprocess(self, torch_image, is_HWC):
         '''
         Preprocessing for embedder network: Flips BGR to RGB, resize, convert to torch tensor, normalise with imagenet mean and variance, reshape. Note: input image yet to be loaded to GPU through tensor.cuda()
 
@@ -85,28 +77,22 @@ class MobileNetv2_Embedder(object):
         else:
             torch_image_rgb = torch_image
 
-        if not self.numpy:
+        if is_HWC:
             torch_image_rgb = torch_image_rgb.permute(2, 0, 1)
-            torch_image_rgb /= 255.0
-            #torch_image_rgb = torch_image_rgb.unsqueeze(0)
+        
+        torch_image_rgb = torch_image_rgb.float()
+        torch_image_rgb /= 255.0
 
-        if self.numpy:
-            trans = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Resize((INPUT_WIDTH, INPUT_WIDTH)),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ])
-        else:
-            trans = transforms.Compose([
-                transforms.Resize((INPUT_WIDTH, INPUT_WIDTH)),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ])
+        trans = transforms.Compose([
+            transforms.Resize((INPUT_WIDTH, INPUT_WIDTH)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
         input_image = trans(torch_image_rgb)
         input_image = input_image.view(1,3,INPUT_WIDTH,INPUT_WIDTH)
         
         return input_image
 
-    def predict(self, torch_images):
+    def predict(self, torch_images, is_HWC=False):
         '''
         batch inference
 
@@ -114,6 +100,8 @@ class MobileNetv2_Embedder(object):
         ------
         torch_images : list of torch.Tensor
             list of (H x W x C), bgr or rgb according to self.bgr
+        is_HWC: 
+            images are in form of (H x W x C) -channels last, otherwise its (C x H x W)
         
         Returns
         ------
@@ -122,7 +110,7 @@ class MobileNetv2_Embedder(object):
         '''
         all_feats = []
 
-        preproc_imgs = [ self.preprocess(img) for img in torch_images ]
+        preproc_imgs = [ self.preprocess(img, is_HWC=is_HWC) for img in torch_images ]
 
         for this_batch in batch(preproc_imgs, bs=self.max_batch_size):
             this_batch = torch.cat(this_batch, dim=0)

@@ -1,7 +1,7 @@
 import cv2
 import argparse
 
-from DTCTracker import DTCTracker
+from DTCTracker import DTCTracker, unnormalise_detections_numpy
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--source', '-s', type=str, default='../videos/170111_040_Tokyo_TrainStation_1080p.mp4', help='source') #File
@@ -11,14 +11,15 @@ args = parser.parse_args()
 
 def vis_preds(frame, tracks):
     #TODO Visulise total stats - % of people wearing mask, total number of people detected
-
     for track in tracks:
         (mask, withoutMask) = track.classification
         label = "Mask" if mask > withoutMask else "No Mask"
 
+
         color = (0, 255, 0) if label == "Mask" else (0, 0, 255)
         confidence_score = max(mask, withoutMask) * 100
         bbox = track.to_tlbr()  
+        bbox = unnormalise_detections_numpy(bbox, frame)
         bbox = list(map(int, bbox)) #Convert list of str to list of int
 
         detection_confidence = track.detection_confidence

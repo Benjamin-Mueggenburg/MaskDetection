@@ -8,7 +8,7 @@ import cv2
 
 
 frame_step = 1 #Every nth frame gets passed to DTCtracker
-resize_factor = 1 # Resize each frame passed to DTCtracker
+resize_factor = 2 # Resize each frame passed to DTCtracker
 
 def get_detections(frame, model):
     image_tensor =  ImageTensor(torch.from_numpy(frame.copy()).to(device))
@@ -18,18 +18,14 @@ def get_detections(frame, model):
 
     preds = model.inference(preproc_image)
     preds = model.nms(preds)
-    
-    print(preds[0].shape)
-    print(preds)
 
-    exit()
 
     if preds[0].shape[0] == 0:
         #No faces detected
         return []
 
     scaled_preds = model.postprocess_scale(preds, preproc_image.shape[-2:], image.shape[:2]) # dets are torch.Tensor with shape of [num_det, 5]. bbox in top left, bottom right format (tlbr)
-
+    #Detections are in tlwh format
     return scaled_preds
 
 
@@ -42,16 +38,16 @@ def vis_preds(frame, detections):
         
         h,w,c = frame.shape
         xywh = detection[:4]  #Convert list of str to list of int
-        x1 = int(xywh[0] * w - 0.5 * xywh[2] * w)
-        y1 = int(xywh[1] * h - 0.5 * xywh[3] * h)
-        x2 = int(xywh[0] * w + 0.5 * xywh[2] * w)
-        y2 = int(xywh[1] * h + 0.5 * xywh[3] * h)
+        x1 = int(xywh[0] * w)
+        y1 = int(xywh[1] * h)
+        x2 = int(x1 + xywh[2] * w)
+        y2 = int(y1 + xywh[3] * h)
         
         detection_confidence = detection[4]
 
 
 
-        text = str(round(detection_confidence))
+        text = str(round(detection_confidence, 3))
         text_location = ( int(x1 + 10), int(y1 + 20) )
 
         frame = cv2.putText(frame, text, text_location, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color)

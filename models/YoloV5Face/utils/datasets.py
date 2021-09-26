@@ -781,7 +781,7 @@ def replicate(img, labels):
     return img, labels
 
 def letterbox_torch(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True):
-    shape = img.shape[:2]
+    shape = img.shape[-2:]
     if isinstance(new_shape, int):
         new_shape = (new_shape, new_shape)
     
@@ -806,7 +806,7 @@ def letterbox_torch(img, new_shape=(640, 640), color=(114, 114, 114), auto=True,
         img = general.rescale_img(img, new_unpad, mode="linear")
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-    img = torchvision.transforms.functional.pad(img, [left, top, right, bottom], fill=color, padding_mode='constant')
+    img = torchvision.transforms.functional.pad(img, [left, top, right, bottom], fill=114, padding_mode='constant')
     return img, ratio, (dw, dh)
 
 

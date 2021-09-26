@@ -42,6 +42,46 @@ class ImageTensor:
         '''Image tensor shape [Channels, Width, Height]'''
         return self.image_tensor_cwh.clone()
 
+def unnormalise_detections(boxes: torch.Tensor, frame:ImageTensor):
+    '''Convert detections from 0 - 1 to image pixel coordiates assuming tlwh'''
+    height, width, channels = frame.channels_last.shape
+    
+    x = torch.clone(boxes)
+    if x.ndim == 1:
+        x[0] *= width #x1 
+        x[1] *= height #y1 
+        x[2] *= width #x2 
+        x[3] *= height #y2
+    else:
+        #boxes have tlwh
+        x[:, 0] *= width #x1 
+        x[:, 1] *= height #y1 
+        x[:, 2] *= width #x2 
+        x[:, 3] *= height #y2
+
+    return x
+
+def unnormalise_detections_numpy(boxes, frame:ImageTensor):
+    '''Convert detections from 0 - 1 to image pixel coordiates assuming tlwh'''
+    if isinstance(frame, ImageTensor):
+        height, width, channels = frame.channels_last.shape
+    else:
+        height, width, channels = frame.shape
+    
+    x = np.copy(boxes)
+    if x.ndim == 1:
+        x[0] *= width #x1 
+        x[1] *= height #y1 
+        x[2] *= width #x2 
+        x[3] *= height #y2
+    else:
+        #boxes have tlwh
+        x[:, 0] *= width #x1 
+        x[:, 1] *= height #y1 
+        x[:, 2] *= width #x2 
+        x[:, 3] *= height #y2
+
+    return x
 
 class DTCTracker:
     def __init__(self):
@@ -66,10 +106,10 @@ class DTCTracker:
         self.image_tensor = ImageTensor(torch.from_numpy(frame.copy()).to(device)) #must copy() frame otherwise weird errors
         #self.image_tensor is of [Width, Height, Channel] shape, whereas image_tensor
 
-        detections = self.get_yolo_detections(self.image_tensor.channels_last)
+        detections = self.get_yolo_detections(self.image_tensor.channels_last) #detections have normalised bboxs 0 - 1, and in form of tlwh
         self.update_tracker(detections, self.image_tensor)
         #del detections #detections are no longer use. TODO use tensor of detections for as long as possbile
-        self.classify()
+        self.classify(self.image_tensor)
 
     def getTracks(self):
         ''' Get Main detections including detect class - should have valid tracks + valid classification
@@ -92,13 +132,13 @@ class DTCTracker:
         if preds[0].shape[0] == 0:
             #No faces detected
             return []
-        scaled_preds = self.faceDetection.postprocess_scale(preds, preproc_frame.shape[-2:], frame.shape[:2]) # dets are torch.Tensor with shape of [num_det, 5]. bbox in top left, bottom right format (tlbr)
-        scaled_preds = convert_tlbr_to_tlwh(scaled_preds) #convert bboxs from top-left-bottom-right to top-left-width-height
+        scaled_preds = self.faceDetection.postprocess_scale(preds, preproc_frame.shape[-2:], frame.shape[:2]) # dets are torch.Tensor with shape of [num_det, 5]. bbox in format (x1, y1, w, h) top-left width, height
+        #bbox are also normalised between 0 - 1 including width and height, so will have to multiply by image width later on
 
         return scaled_preds
     ######
     #Mask Detection classify
-    def classify(self):
+    def classify(self, frame:ImageTensor):
         current_tracks = self.getAllTracks()
 
         track_idx = []
@@ -123,8 +163,9 @@ class DTCTracker:
         if len(bboxs) == 0:
             return []
         
+        bboxs = [unnormalise_detections_numpy(box, frame) for box in bboxs]
         #Could really just use the get_image_patch code below but who cares
-        rois = [ ImageTensor.channels_last[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])] for bbox in bboxs]
+        rois = [ frame.channels_last[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])] for bbox in bboxs]
         return self.maskClassifier.batch_classify(rois)
 
         
@@ -141,16 +182,22 @@ class DTCTracker:
     ######
     #Deepsort model
     def get_image_patch(self, bbox, frame: ImageTensor):
-        '''Crop frame to bbox TLWH'''
+        '''Crop frame to bbox TLWH assuming box is unnormalised'''
         tlbr = convert_tlwh_to_tlbr(bbox).cpu().int().tolist()
         xmin, ymin, xmax, ymax = tlbr
         return frame.channels_first[:, ymin:ymax, xmin:xmax]
 
     def get_features(self, bboxs: torch.Tensor, frame: ImageTensor):
-        '''Given bboxs and frame, use deepsort to get features, returns List[np.array with shape 1280]''' 
+        '''Given bboxs (normalised) and frame, use deepsort to get features, returns List[np.array with shape 1280]''' 
 
         #bboxs have shape of (<num of bboxs>, 4) where it's format is top left width height (tlwh), image patchs do have 
-        image_patches = [self.get_image_patch(box, frame) for box in bboxs]
+        image_patches = [self.get_image_patch(box, frame) for box in unnormalise_detections(bboxs, frame)]
+        
+        # if len(image_patches) > 0:
+        #     from torchvision.utils import save_image
+        #     save_image(image_patches[0].float() / 255, "./test_patch_v3.jpg") 
+        #     exit()
+            
         return self.embeder.predict(image_patches)
 
     def is_valid_track(self, track):

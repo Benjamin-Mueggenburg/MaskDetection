@@ -139,8 +139,7 @@ class Yolov5FaceModel(Module):
                     #TORCH 
                     xywh = (convert_tlbr_to_tlwh(det[j, :4].view(1, 4)) / gn).view(-1)
                     conf = det[j, 4]
-                    dets = torch.cat( (dets, torch.cat((xywh, conf.unsqueeze(0))).unsqueeze(0)) ) #Assume torch.cat(bbox, conf) has a shape of [5] not [1,5]
-                        
+                    dets = torch.cat( (dets, torch.cat((xywh, conf.unsqueeze(0))).unsqueeze(0)) ) #Assume torch.cat(bbox, conf) has a shape of [5] not [1,5] 
                     #NUMPY
                     # bbox = det[j, :4].view(-1).tolist()
                     # conf = det[j, 4].cpu().numpy()
